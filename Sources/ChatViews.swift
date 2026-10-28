@@ -37,6 +37,14 @@ struct LoginView: View {
                 }
             }
             Section {
+                Button("ซิงค์สิทธิ์จากแท็บ Terminal (Cloudflare)") {
+                    Task {
+                        let synced = await AccessCookieBridge.syncFromWebView()
+                        model.error = synced > 0 ? "ซิงค์คุกกี้แล้ว \(synced) รายการ — กดเข้าสู่ระบบอีกครั้ง" : "ยังไม่พบคุกกี้ Cloudflare — ไปล็อกอินที่แท็บ Terminal ก่อน"
+                    }
+                }
+            }
+            Section {
                 Button {
                     Task { await model.login() }
                 } label: {
@@ -106,7 +114,7 @@ struct SessionListView: View {
         do {
             sessions = try await HermesAPI.shared.sessions()
         } catch {
-            self.error = error.localizedDescription
+            self.error = "\(error.localizedDescription) — ถ้าเป็นเรื่องสิทธิ์ ให้ล็อกอิน Cloudflare ที่แท็บ Terminal แล้วกลับมากด refresh"
         }
         loading = false
     }

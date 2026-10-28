@@ -1,5 +1,6 @@
 import Foundation
 import Security
+import WebKit
 
 struct APISession: Decodable, Identifiable, Hashable {
     let id: String
@@ -33,6 +34,27 @@ enum APIError: LocalizedError {
         case .status(let code): return "เซิร์ฟเวอร์ตอบ \(code)"
         case .unauthorized: return "ยังไม่ได้ล็อกอิน หรือ session หมดอายุ"
         case .decoding: return "ข้อมูลที่ได้ไม่ตรงรูปแบบ"
+        }
+    }
+}
+
+enum AccessCookieBridge {
+    static func syncFromWebView(completion: @escaping (Int) -> Void) {
+        WKWebsiteDataStore.default().httpCookieStore.getAllCookies { cookies in
+            var copied = 0
+            for cookie in cookies {
+                let domain = cookie.domain
+                guard domain.contains("thewhome.top") || domain.contains("cloudflareaccess.com") else { continue }
+                HTTPCookieStorage.shared.setCookie(cookie)
+                copied += 1
+            }
+            completion(copied)
+        }
+    }
+
+    static func syncFromWebView() async -> Int {
+        await withCheckedContinuation { continuation in
+            syncFromWebView { continuation.resume(returning: $0) }
         }
     }
 }
@@ -164,6 +186,7 @@ final class AppModel: ObservableObject {
     }
 
     func bootstrap() async {
+        _ = await AccessCookieBridge.syncFromWebView()
         if await HermesAPI.shared.isLoggedIn() { loggedIn = true }
     }
 
@@ -172,6 +195,7 @@ final class AppModel: ObservableObject {
         error = nil
         HermesAPI.shared.baseURL = URL(string: baseURLText) ?? HermesAPI.shared.baseURL
         do {
+            _ = await AccessCookieBridge.syncFromWebView()
             try await HermesAPI.shared.login(username: username, password: password)
             Credentials.save(baseURL: baseURLText, username: username, password: password)
             loggedIn = true
