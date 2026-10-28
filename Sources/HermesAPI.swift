@@ -13,7 +13,7 @@ struct APISession: Decodable, Identifiable, Hashable {
 }
 
 struct APIMessage: Decodable, Identifiable {
-    let id: String
+    let id: Int
     let role: String
     let content: String?
     let timestamp: Double?
