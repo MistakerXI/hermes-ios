@@ -2,7 +2,47 @@ import SwiftUI
 import UIKit
 import WebKit
 
-private let dashboardURL = URL(string: "https://dash.thewhome.top/chat")!
+private let terminalURL = URL(string: "https://dash.thewhome.top/chat")!
+
+@main
+struct HermesApp: App {
+    @StateObject private var model = AppModel()
+
+    var body: some Scene {
+        WindowGroup {
+            RootView()
+                .environmentObject(model)
+                .preferredColorScheme(.dark)
+        }
+    }
+}
+
+struct RootView: View {
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        TabView {
+            NavigationStack {
+                ChatRootView()
+            }
+            .tabItem { Label("Chat", systemImage: "bubble.left.and.bubble.right") }
+
+            NavigationStack {
+                TerminalScreen()
+                    .navigationTitle("Terminal")
+                    .navigationBarTitleDisplayMode(.inline)
+            }
+            .tabItem { Label("Terminal", systemImage: "terminal") }
+        }
+        .task { await model.bootstrap() }
+    }
+}
+
+struct TerminalScreen: View {
+    var body: some View {
+        DashboardWebView()
+    }
+}
 
 struct DashboardWebView: UIViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -18,7 +58,7 @@ struct DashboardWebView: UIViewRepresentable {
         web.allowsBackForwardNavigationGestures = true
         web.isOpaque = false
         web.backgroundColor = UIColor(red: 0.031, green: 0.031, blue: 0.110, alpha: 1)
-        web.load(URLRequest(url: dashboardURL))
+        web.load(URLRequest(url: terminalURL))
         return web
     }
 
@@ -34,6 +74,7 @@ struct DashboardWebView: UIViewRepresentable {
             }
             return nil
         }
+
         func webView(_ web: WKWebView,
                      decidePolicyFor navigationAction: WKNavigationAction,
                      decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
@@ -50,16 +91,6 @@ struct DashboardWebView: UIViewRepresentable {
                 return
             }
             decisionHandler(.allow)
-        }
-    }
-}
-
-@main
-struct HermesApp: App {
-    var body: some Scene {
-        WindowGroup {
-            DashboardWebView()
-                .preferredColorScheme(.dark)
         }
     }
 }
