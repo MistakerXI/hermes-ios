@@ -31,6 +31,12 @@ struct LoginView: View {
                     .autocorrectionDisabled()
                 SecureField("password", text: $model.password)
             }
+            Section("Cloudflare Service Token (ถ้าใช้)") {
+                TextField("Client ID", text: $model.accessClientID)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                SecureField("Client Secret", text: $model.accessClientSecret)
+            }
             if let error = model.error {
                 Section {
                     Text(error).font(.footnote).foregroundStyle(.red)

@@ -27,12 +27,14 @@ struct RootView: View {
             }
             .tabItem { Label("Chat", systemImage: "bubble.left.and.bubble.right") }
 
-            NavigationStack {
-                TerminalScreen()
-                    .navigationTitle("Terminal")
-                    .navigationBarTitleDisplayMode(.inline)
+            if model.accessClientID.isEmpty {
+                NavigationStack {
+                    TerminalScreen()
+                        .navigationTitle("Terminal")
+                        .navigationBarTitleDisplayMode(.inline)
+                }
+                .tabItem { Label("Terminal", systemImage: "terminal") }
             }
-            .tabItem { Label("Terminal", systemImage: "terminal") }
         }
         .task { await model.bootstrap() }
     }

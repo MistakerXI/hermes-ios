@@ -75,6 +75,20 @@ final class HermesAPI {
     private let decoder = JSONDecoder()
     private let encoder = JSONEncoder()
 
+    var accessClientID = ""
+    var accessClientSecret = ""
+
+    private func makeRequest(_ path: String, method: String = "GET", query: [String: String] = [:]) -> URLRequest {
+        var request = URLRequest(url: url(path, query))
+        request.httpMethod = method
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        if !accessClientID.isEmpty, !accessClientSecret.isEmpty {
+            request.setValue(accessClientID, forHTTPHeaderField: "CF-Access-Client-Id")
+            request.setValue(accessClientSecret, forHTTPHeaderField: "CF-Access-Client-Secret")
+        }
+        return request
+    }
+
     private func url(_ path: String, _ query: [String: String] = [:]) -> URL {
         var comps = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)!
         var basePath = comps.path
@@ -95,8 +109,7 @@ final class HermesAPI {
     }
 
     func login(username: String, password: String) async throws {
-        var request = URLRequest(url: url("auth/password-login"))
-        request.httpMethod = "POST"
+        var request = makeRequest("auth/password-login", method: "POST")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try encoder.encode(["provider": "basic", "username": username, "password": password])
         let data = try await send(request)
@@ -106,8 +119,7 @@ final class HermesAPI {
     }
 
     func isLoggedIn() async -> Bool {
-        var request = URLRequest(url: url("api/auth/me"))
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        let request = makeRequest("api/auth/me")
         guard let (_, response) = try? await http.data(for: request),
               let reply = response as? HTTPURLResponse else { return false }
         // A Cloudflare Access redirect also finishes as 200 — but on the Access
@@ -118,15 +130,15 @@ final class HermesAPI {
     }
 
     func sessions(limit: Int = 60) async throws -> [APISession] {
-        let request = URLRequest(url: url("api/sessions", ["limit": "\(limit)", "offset": "0", "order": "latest"]))
+        let request = makeRequest("api/sessions", query: ["limit": "\(limit)", "offset": "0", "order": "latest"])
         let data = try await send(request)
         guard let out = try? decoder.decode(SessionsResponse.self, from: data) else { throw APIError.decoding }
         return out.sessions
     }
 
     func messages(sessionId: String, limit: Int = 300, offset: Int = 0) async throws -> [APIMessage] {
-        let request = URLRequest(url: url("api/sessions/\(sessionId)/messages",
-                                          ["limit": "\(limit)", "offset": "\(offset)", "order": "oldest", "inline_images": "false"]))
+        let request = makeRequest("api/sessions/\(sessionId)/messages",
+                                  query: ["limit": "\(limit)", "offset": "\(offset)", "order": "oldest", "inline_images": "false"])
         let data = try await send(request)
         guard let out = try? decoder.decode(MessagesResponse.self, from: data) else { throw APIError.decoding }
         return out.messages
@@ -138,6 +150,8 @@ enum Credentials {
         var baseURL: String
         var username: String
         var password: String
+        var accessClientID: String
+        var accessClientSecret: String
     }
 
     private static let service = "top.thewhome.hermes"
@@ -146,31 +160,39 @@ enum Credentials {
         let defaults = UserDefaults.standard
         return Saved(baseURL: defaults.string(forKey: "baseURL") ?? "https://dash.thewhome.top",
                      username: defaults.string(forKey: "username") ?? "thew",
-                     password: readPassword() ?? "")
+                     password: readSecret(account: "password") ?? "",
+                     accessClientID: defaults.string(forKey: "accessClientID") ?? "",
+                     accessClientSecret: readSecret(account: "accessClientSecret") ?? "")
     }
 
-    static func save(baseURL: String, username: String, password: String) {
+    static func save(baseURL: String, username: String, password: String,
+                     accessClientID: String, accessClientSecret: String) {
         let defaults = UserDefaults.standard
         defaults.set(baseURL, forKey: "baseURL")
         defaults.set(username, forKey: "username")
-        writePassword(password)
+        defaults.set(accessClientID, forKey: "accessClientID")
+        writeSecret(password, account: "password")
+        writeSecret(accessClientSecret, account: "accessClientSecret")
     }
 
-    private static func writePassword(_ password: String) {
+    private static func writeSecret(_ value: String, account: String) {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
         ]
         SecItemDelete(query as CFDictionary)
+        guard !value.isEmpty else { return }
         var item = query
-        item[kSecValueData as String] = Data(password.utf8)
+        item[kSecValueData as String] = Data(value.utf8)
         SecItemAdd(item as CFDictionary, nil)
     }
 
-    private static func readPassword() -> String? {
+    private static func readSecret(account: String) -> String? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
         ]
@@ -186,6 +208,8 @@ final class AppModel: ObservableObject {
     @Published var baseURLText: String
     @Published var username: String
     @Published var password: String
+    @Published var accessClientID: String
+    @Published var accessClientSecret: String
     @Published var loggedIn = false
     @Published var busy = false
     @Published var error: String?
@@ -195,7 +219,11 @@ final class AppModel: ObservableObject {
         baseURLText = saved.baseURL
         username = saved.username
         password = saved.password
+        accessClientID = saved.accessClientID
+        accessClientSecret = saved.accessClientSecret
         HermesAPI.shared.baseURL = URL(string: saved.baseURL) ?? HermesAPI.shared.baseURL
+        HermesAPI.shared.accessClientID = saved.accessClientID
+        HermesAPI.shared.accessClientSecret = saved.accessClientSecret
     }
 
     func bootstrap() async {
@@ -207,10 +235,13 @@ final class AppModel: ObservableObject {
         busy = true
         error = nil
         HermesAPI.shared.baseURL = URL(string: baseURLText) ?? HermesAPI.shared.baseURL
+        HermesAPI.shared.accessClientID = accessClientID.trimmingCharacters(in: .whitespacesAndNewlines)
+        HermesAPI.shared.accessClientSecret = accessClientSecret.trimmingCharacters(in: .whitespacesAndNewlines)
         do {
             _ = await AccessCookieBridge.syncFromWebView()
             try await HermesAPI.shared.login(username: username, password: password)
-            Credentials.save(baseURL: baseURLText, username: username, password: password)
+            Credentials.save(baseURL: baseURLText, username: username, password: password,
+                             accessClientID: accessClientID, accessClientSecret: accessClientSecret)
             loggedIn = true
         } catch {
             self.error = error.localizedDescription
