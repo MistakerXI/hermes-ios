@@ -59,6 +59,14 @@ enum AccessCookieBridge {
     }
 }
 
+enum AppVersion {
+    static var text: String {
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
+        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?"
+        return "\(version) (\(build))"
+    }
+}
+
 final class HermesAPI {
     static let shared = HermesAPI()
 
@@ -100,8 +108,13 @@ final class HermesAPI {
     func isLoggedIn() async -> Bool {
         var request = URLRequest(url: url("api/auth/me"))
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        guard let (_, response) = try? await http.data(for: request) else { return false }
-        return (response as? HTTPURLResponse)?.statusCode == 200
+        guard let (_, response) = try? await http.data(for: request),
+              let reply = response as? HTTPURLResponse else { return false }
+        // A Cloudflare Access redirect also finishes as 200 — but on the Access
+        // host and as HTML, so require our own host plus a JSON content type.
+        guard reply.url?.host == baseURL.host else { return false }
+        let type = (reply.value(forHTTPHeaderField: "Content-Type") ?? "").lowercased()
+        return reply.statusCode == 200 && type.contains("json")
     }
 
     func sessions(limit: Int = 60) async throws -> [APISession] {

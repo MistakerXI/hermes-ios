@@ -55,6 +55,10 @@ struct LoginView: View {
                     }
                 }
                 .disabled(model.busy || model.password.isEmpty)
+            } footer: {
+                Text("native chat · build \(AppVersion.text)")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
             }
         }
         .navigationTitle("Hermes")
