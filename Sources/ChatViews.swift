@@ -1,3 +1,4 @@
+import UIKit
 import SwiftUI
 
 struct ChatRootView: View {
@@ -138,7 +139,14 @@ struct ChatDetailView: View {
     @State private var loading = false
     @State private var draft = ""
     @State private var pendingUserText: String?
+    @State private var query = ""
     @StateObject private var gateway = GatewaySocket()
+
+    private var filtered: [APIMessage] {
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !needle.isEmpty else { return messages }
+        return messages.filter { ($0.content ?? "").lowercased().contains(needle) }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -148,7 +156,7 @@ struct ChatDetailView: View {
                         if let error {
                             Text(error).font(.footnote).foregroundStyle(.red)
                         }
-                        ForEach(messages) { message in
+                        ForEach(filtered) { message in
                             MessageRow(message: message).id(message.id)
                         }
                         if let pendingUserText {
@@ -162,6 +170,11 @@ struct ChatDetailView: View {
                                 Text("กำลังตอบ…").font(.caption).foregroundStyle(.secondary)
                             }
                             .id("live-busy")
+                        }
+                        ForEach(Array(gateway.approvals.enumerated()), id: \.offset) { _, approval in
+                            ApprovalCard(approval: approval) { choice in
+                                gateway.respondApproval(approval, choice: choice)
+                            }
                         }
                     }
                     .padding(.horizontal, 14)
@@ -182,6 +195,7 @@ struct ChatDetailView: View {
             }
             composer
         }
+        .searchable(text: $query, prompt: "ค้นหาในประวัติ")
         .navigationTitle(session.displayTitle)
         .navigationBarTitleDisplayMode(.inline)
     }
@@ -235,6 +249,7 @@ struct ChatDetailView: View {
     private func openGateway() async {
         do {
             let ticket = try await HermesAPI.shared.wsTicket()
+            gateway.reconnectHandler = { Task { await openGateway() } }
             gateway.connect(base: HermesAPI.shared.baseURL,
                             ticket: ticket,
                             clientId: HermesAPI.shared.accessClientID,
@@ -245,11 +260,57 @@ struct ChatDetailView: View {
                 let payload = reply["result"] as? [String: Any] ?? [:]
                 if let sid = payload["session_id"] as? String {
                     gateway.runtimeSessionId = sid
+                    gateway.refreshApprovals()
                 }
             }
         } catch {
             self.error = error.localizedDescription
         }
+    }
+}
+
+struct ApprovalCard: View {
+    let approval: [String: Any]
+    let onChoice: (String) -> Void
+
+    private var title: String {
+        (approval["title"] as? String)
+            ?? (approval["command"] as? String)
+            ?? (approval["prompt"] as? String)
+            ?? "มีคำขออนุญาต"
+    }
+
+    private var detail: String {
+        (approval["description"] as? String) ?? (approval["reason"] as? String) ?? ""
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Text("ต้องอนุมัติ").font(.caption2).fontWeight(.bold)
+                    .padding(.horizontal, 7).padding(.vertical, 2)
+                    .background(Color.yellow.opacity(0.25))
+                    .foregroundStyle(.yellow)
+                    .clipShape(Capsule())
+                Spacer(minLength: 0)
+            }
+            Text(title).font(.system(size: 12, design: .monospaced)).textSelection(.enabled)
+            if !detail.isEmpty {
+                Text(detail).font(.caption).foregroundStyle(.secondary)
+            }
+            HStack(spacing: 10) {
+                Button("อนุญาต (ครั้งนี้)") { onChoice("once") }
+                    .buttonStyle(.borderedProminent)
+                Button("ปฏิเสธ") { onChoice("deny") }
+                    .buttonStyle(.bordered)
+                Spacer(minLength: 0)
+            }
+            .font(.caption)
+        }
+        .padding(11)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.yellow.opacity(0.10))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
     }
 }
 
@@ -324,13 +385,25 @@ struct MessageRow: View {
             } else {
                 ForEach(pieces) { piece in
                     if piece.isCode {
-                        Text(piece.text)
-                            .font(.system(size: 12, design: .monospaced))
-                            .textSelection(.enabled)
-                            .padding(8)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(Color(white: 0.05))
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(piece.text)
+                                .font(.system(size: 12, design: .monospaced))
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            HStack {
+                                Spacer(minLength: 0)
+                                Button {
+                                    UIPasteboard.general.string = piece.text
+                                } label: {
+                                    Label("คัดลอก", systemImage: "doc.on.doc")
+                                        .font(.caption2)
+                                }
+                                .buttonStyle(.bordered)
+                            }
+                        }
+                        .padding(8)
+                        .background(Color(white: 0.05))
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
                     } else {
                         Text(markdown(piece.text))
                             .font(.callout)

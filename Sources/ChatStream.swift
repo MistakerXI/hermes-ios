@@ -6,10 +6,15 @@ final class GatewaySocket: ObservableObject {
     @Published private(set) var liveText = ""
     @Published private(set) var busy = false
     @Published private(set) var lastError: String?
+    @Published private(set) var approvals: [[String: Any]] = []
+
+    var reconnectHandler: (() -> Void)?
 
     private var socket: URLSessionWebSocketTask?
     private var pending: [Int: ([String: Any]) -> Void] = [:]
     private var nextId = 1
+    private var reconnectAttempts = 0
+    private var approvalTimer: Timer?
     private let urlSession = URLSession(configuration: .default)
 
     func markBusy() {
@@ -36,6 +41,7 @@ final class GatewaySocket: ObservableObject {
         socket = task
         task.resume()
         listen()
+        startApprovalPolling()
     }
 
     private func listen() {
@@ -45,11 +51,26 @@ final class GatewaySocket: ObservableObject {
                 switch result {
                 case .failure(let error):
                     self.lastError = error.localizedDescription
+                    self.recover()
                 case .success(let message):
+                    self.reconnectAttempts = 0
                     self.handle(message)
                     self.listen()
                 }
             }
+        }
+    }
+
+    private func recover() {
+        socket?.cancel(with: .goingAway, reason: nil)
+        socket = nil
+        approvalTimer?.invalidate()
+        approvalTimer = nil
+        guard reconnectAttempts < 3, let reconnectHandler else { return }
+        reconnectAttempts += 1
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            reconnectHandler()
         }
     }
 
@@ -73,8 +94,36 @@ final class GatewaySocket: ObservableObject {
         case "message.complete":
             if let whole = payload["text"] as? String, !whole.isEmpty { liveText = whole }
             busy = false
+            refreshApprovals()
         default:
             break
+        }
+    }
+
+    private func startApprovalPolling() {
+        approvalTimer?.invalidate()
+        approvalTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.refreshApprovals() }
+        }
+    }
+
+    func refreshApprovals() {
+        guard let runtimeSessionId else { return }
+        rpc("approval.pending", ["session_id": runtimeSessionId]) { [weak self] reply in
+            let result = reply["result"] as? [String: Any] ?? [:]
+            let list = result["approvals"] as? [[String: Any]] ?? []
+            self?.approvals = list
+        }
+    }
+
+    func respondApproval(_ approval: [String: Any], choice: String) {
+        guard let runtimeSessionId else { return }
+        var params: [String: Any] = ["session_id": runtimeSessionId, "choice": choice]
+        if let requestId = approval["request_id"] as? String, !requestId.isEmpty {
+            params["request_id"] = requestId
+        }
+        rpc("approval.respond", params) { [weak self] _ in
+            Task { @MainActor in self?.refreshApprovals() }
         }
     }
 
