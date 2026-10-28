@@ -39,22 +39,22 @@ enum APIError: LocalizedError {
 }
 
 enum AccessCookieBridge {
-    static func syncFromWebView(completion: @escaping (Int) -> Void) {
-        WKWebsiteDataStore.default().httpCookieStore.getAllCookies { cookies in
-            var copied = 0
-            for cookie in cookies {
-                let domain = cookie.domain
-                guard domain.contains("thewhome.top") || domain.contains("cloudflareaccess.com") else { continue }
-                HTTPCookieStorage.shared.setCookie(cookie)
-                copied += 1
-            }
-            completion(copied)
-        }
-    }
-
+    // WebKit initializes its default data store once and hard-kills the process
+    // (EXC_BREAKPOINT) when that happens off the main thread — so this whole
+    // bridge is main-actor bound, never called from a cooperative thread.
+    @MainActor
     static func syncFromWebView() async -> Int {
-        await withCheckedContinuation { continuation in
-            syncFromWebView { continuation.resume(returning: $0) }
+        await withCheckedContinuation { (continuation: CheckedContinuation<Int, Never>) in
+            WKWebsiteDataStore.default().httpCookieStore.getAllCookies { cookies in
+                var copied = 0
+                for cookie in cookies {
+                    let domain = cookie.domain
+                    guard domain.contains("thewhome.top") || domain.contains("cloudflareaccess.com") else { continue }
+                    HTTPCookieStorage.shared.setCookie(cookie)
+                    copied += 1
+                }
+                continuation.resume(returning: copied)
+            }
         }
     }
 }
