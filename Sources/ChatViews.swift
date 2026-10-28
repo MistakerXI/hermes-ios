@@ -180,6 +180,12 @@ struct ChatDetailView: View {
     }
 }
 
+struct MessagePiece: Identifiable {
+    let id = UUID()
+    let isCode: Bool
+    let text: String
+}
+
 struct MessageRow: View {
     let message: APIMessage
     @State private var expanded = false
@@ -199,11 +205,37 @@ struct MessageRow: View {
                     Text(tool).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
                 }
                 Spacer(minLength: 0)
+                if isCollapsedTool {
+                    Text("\(fullText.count) ตัวอักษร").font(.caption2).foregroundStyle(.tertiary)
+                }
             }
-            Text(rendered)
-                .font(.callout)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
+
+            if isCollapsedTool {
+                Text("ผลลัพธ์จากเครื่องมือ — แตะเพื่อเปิดดู")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            } else if pieces.isEmpty {
+                Text("(ไม่มีข้อความ)")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            } else {
+                ForEach(pieces) { piece in
+                    if piece.isCode {
+                        Text(piece.text)
+                            .font(.system(size: 12, design: .monospaced))
+                            .textSelection(.enabled)
+                            .padding(8)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color(white: 0.05))
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                    } else {
+                        Text(markdown(piece.text))
+                            .font(.callout)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+            }
         }
         .padding(11)
         .background(Color(white: 0.11))
@@ -212,21 +244,41 @@ struct MessageRow: View {
         .onTapGesture { expanded.toggle() }
     }
 
+    private var isCollapsedTool: Bool { message.role == "tool" && !expanded }
     private var fullText: String { message.content ?? "" }
 
-    private var visibleText: String {
-        if expanded || fullText.count <= 2400 { return fullText }
-        return String(fullText.prefix(2400)) + "\n\n… แตะเพื่อแสดงทั้งหมด"
+    private var pieces: [MessagePiece] {
+        let limit = expanded ? 12000 : 2400
+        var text = fullText
+        if text.count > limit {
+            text = String(text.prefix(limit)) + "\n\n… แตะเพื่อแสดงทั้งหมด"
+        }
+        var result: [MessagePiece] = []
+        var buffer = ""
+        var inCode = false
+        for line in text.components(separatedBy: "\n") {
+            if line.hasPrefix("```") {
+                if !buffer.isEmpty {
+                    result.append(MessagePiece(isCode: inCode, text: buffer))
+                    buffer = ""
+                }
+                inCode.toggle()
+                continue
+            }
+            buffer += buffer.isEmpty ? line : "\n" + line
+        }
+        if !buffer.isEmpty { result.append(MessagePiece(isCode: inCode, text: buffer)) }
+        return result
     }
 
-    private var rendered: AttributedString {
+    private func markdown(_ text: String) -> AttributedString {
         if let attributed = try? AttributedString(
-            markdown: visibleText,
+            markdown: text,
             options: AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
         ) {
             return attributed
         }
-        return AttributedString(visibleText)
+        return AttributedString(text)
     }
 
     private var roleColor: Color {
