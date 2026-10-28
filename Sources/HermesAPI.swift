@@ -13,11 +13,30 @@ struct APISession: Decodable, Identifiable, Hashable {
 }
 
 struct APIMessage: Decodable, Identifiable {
-    let id: Int
+    let id: String
     let role: String
     let content: String?
     let timestamp: Double?
     let tool_name: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case id, role, content, timestamp, tool_name
+    }
+
+    init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        if let number = try? box.decode(Int.self, forKey: .id) {
+            id = String(number)
+        } else if let text = try? box.decode(String.self, forKey: .id) {
+            id = text
+        } else {
+            id = UUID().uuidString
+        }
+        role = (try? box.decodeIfPresent(String.self, forKey: .role)).flatMap { $0 } ?? "unknown"
+        content = (try? box.decodeIfPresent(String.self, forKey: .content)).flatMap { $0 }
+        timestamp = (try? box.decodeIfPresent(Double.self, forKey: .timestamp)).flatMap { $0 }
+        tool_name = (try? box.decodeIfPresent(String.self, forKey: .tool_name)).flatMap { $0 }
+    }
 }
 
 private struct SessionsResponse: Decodable { let sessions: [APISession] }

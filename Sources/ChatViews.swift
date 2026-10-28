@@ -105,7 +105,7 @@ struct SessionListView: View {
                 }
             }
         }
-        .navigationTitle("Sessions")
+        .navigationTitle("Sessions · \(AppVersion.text)")
         .navigationDestination(for: APISession.self) { session in
             ChatDetailView(session: session)
         }
