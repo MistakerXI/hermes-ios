@@ -28,12 +28,14 @@ enum APIError: LocalizedError {
     case status(Int)
     case unauthorized
     case decoding
+    case server(String)
 
     var errorDescription: String? {
         switch self {
         case .status(let code): return "เซิร์ฟเวอร์ตอบ \(code)"
-        case .unauthorized: return "ยังไม่ได้ล็อกอิน หรือ session หมดอายุ"
+        case .unauthorized: return "Cloudflare Access ไม่ผ่าน (หรือ session หมดอายุ) — ตรวจ Client ID/Secret และ policy Service Auth"
         case .decoding: return "ข้อมูลที่ได้ไม่ตรงรูปแบบ"
+        case .server(let detail): return detail
         }
     }
 }
@@ -100,11 +102,21 @@ final class HermesAPI {
         return comps.url!
     }
 
+    private struct ServerDetail: Decodable { let detail: String? }
+
     private func send(_ request: URLRequest) async throws -> Data {
         let (data, response) = try await http.data(for: request)
-        guard let status = (response as? HTTPURLResponse)?.statusCode else { throw APIError.status(-1) }
-        if status == 401 { throw APIError.unauthorized }
-        guard (200..<300).contains(status) else { throw APIError.status(status) }
+        guard let reply = response as? HTTPURLResponse else { throw APIError.status(-1) }
+        if reply.statusCode == 401 { throw APIError.unauthorized }
+        // HTML means Cloudflare Access answered with its login page instead of our API.
+        let type = (reply.value(forHTTPHeaderField: "Content-Type") ?? "").lowercased()
+        if !type.contains("json") { throw APIError.unauthorized }
+        guard (200..<300).contains(reply.statusCode) else {
+            if let detail = (try? decoder.decode(ServerDetail.self, from: data))?.detail, !detail.isEmpty {
+                throw APIError.server("HTTP \(reply.statusCode) — \(detail)")
+            }
+            throw APIError.status(reply.statusCode)
+        }
         return data
     }
 
@@ -130,7 +142,7 @@ final class HermesAPI {
     }
 
     func sessions(limit: Int = 60) async throws -> [APISession] {
-        let request = makeRequest("api/sessions", query: ["limit": "\(limit)", "offset": "0", "order": "latest"])
+        let request = makeRequest("api/sessions", query: ["limit": "\(limit)", "offset": "0", "order": "recent"])
         let data = try await send(request)
         guard let out = try? decoder.decode(SessionsResponse.self, from: data) else { throw APIError.decoding }
         return out.sessions
