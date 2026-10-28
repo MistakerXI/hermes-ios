@@ -136,34 +136,87 @@ struct ChatDetailView: View {
     @State private var messages: [APIMessage] = []
     @State private var error: String?
     @State private var loading = false
+    @State private var draft = ""
+    @State private var pendingUserText: String?
+    @StateObject private var gateway = GatewaySocket()
 
     var body: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 12) {
-                    if let error {
-                        Text(error).font(.footnote).foregroundStyle(.red)
+        VStack(spacing: 0) {
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 12) {
+                        if let error {
+                            Text(error).font(.footnote).foregroundStyle(.red)
+                        }
+                        ForEach(messages) { message in
+                            MessageRow(message: message).id(message.id)
+                        }
+                        if let pendingUserText {
+                            UserBubble(text: pendingUserText).id("pending-user")
+                        }
+                        if !gateway.liveText.isEmpty {
+                            LiveBubble(text: gateway.liveText).id("live-assistant")
+                        } else if gateway.busy {
+                            HStack(spacing: 8) {
+                                ProgressView().controlSize(.small)
+                                Text("กำลังตอบ…").font(.caption).foregroundStyle(.secondary)
+                            }
+                            .id("live-busy")
+                        }
                     }
-                    ForEach(messages) { message in
-                        MessageRow(message: message).id(message.id)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+                }
+                .refreshable { await reload(proxy: nil) }
+                .task {
+                    await reload(proxy: proxy)
+                    await openGateway()
+                }
+                .onChange(of: gateway.liveText) { _ in
+                    if !gateway.liveText.isEmpty {
+                        withAnimation(.easeOut(duration: 0.15)) {
+                            proxy.scrollTo("live-assistant", anchor: .bottom)
+                        }
                     }
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 12)
             }
-            .refreshable { await load(proxy: nil) }
-            .task { await load(proxy: proxy) }
-            .overlay {
-                if loading && messages.isEmpty {
-                    ProgressView().controlSize(.large)
-                }
-            }
+            composer
         }
         .navigationTitle(session.displayTitle)
         .navigationBarTitleDisplayMode(.inline)
     }
 
-    private func load(proxy: ScrollViewProxy?) async {
+    private var composer: some View {
+        HStack(spacing: 8) {
+            TextField("พิมพ์ข้อความ…", text: $draft, axis: .vertical)
+                .textFieldStyle(.plain)
+                .lineLimit(1...4)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 9)
+                .background(Color(white: 0.14))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+            Button {
+                send()
+            } label: {
+                Image(systemName: "arrow.up.circle.fill").font(.system(size: 28))
+            }
+            .disabled(gateway.runtimeSessionId == nil || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color(white: 0.07))
+    }
+
+    private func send() {
+        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, let runtime = gateway.runtimeSessionId else { return }
+        draft = ""
+        pendingUserText = text
+        gateway.markBusy()
+        gateway.rpc("prompt.submit", ["session_id": runtime, "text": text])
+    }
+
+    private func reload(proxy: ScrollViewProxy?) async {
         loading = true
         error = nil
         do {
@@ -177,6 +230,56 @@ struct ChatDetailView: View {
             self.error = error.localizedDescription
         }
         loading = false
+    }
+
+    private func openGateway() async {
+        do {
+            let ticket = try await HermesAPI.shared.wsTicket()
+            gateway.connect(base: HermesAPI.shared.baseURL,
+                            ticket: ticket,
+                            clientId: HermesAPI.shared.accessClientID,
+                            clientSecret: HermesAPI.shared.accessClientSecret)
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            gateway.rpc("session.resume",
+                        ["session_id": session.id, "lazy": true, "omit_messages": true]) { reply in
+                let payload = reply["result"] as? [String: Any] ?? [:]
+                if let sid = payload["session_id"] as? String {
+                    gateway.runtimeSessionId = sid
+                }
+            }
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+}
+
+struct UserBubble: View {
+    let text: String
+
+    var body: some View {
+        HStack {
+            Spacer(minLength: 40)
+            Text(text)
+                .font(.callout)
+                .padding(11)
+                .background(Color.cyan.opacity(0.18))
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+        }
+    }
+}
+
+struct LiveBubble: View {
+    let text: String
+
+    var body: some View {
+        HStack {
+            Text(text)
+                .font(.callout)
+                .padding(11)
+                .background(Color.green.opacity(0.14))
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+            Spacer(minLength: 40)
+        }
     }
 }
 

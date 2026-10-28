@@ -160,6 +160,16 @@ final class HermesAPI {
         return reply.statusCode == 200 && type.contains("json")
     }
 
+    func wsTicket() async throws -> String {
+        var request = makeRequest("api/auth/ws-ticket", method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = Data("{}".utf8)
+        let data = try await send(request)
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let ticket = object["ticket"] as? String, !ticket.isEmpty else { throw APIError.decoding }
+        return ticket
+    }
+
     func sessions(limit: Int = 60) async throws -> [APISession] {
         let request = makeRequest("api/sessions", query: ["limit": "\(limit)", "offset": "0", "order": "recent"])
         let data = try await send(request)
